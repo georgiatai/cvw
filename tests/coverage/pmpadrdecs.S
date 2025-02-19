@@ -7,7 +7,10 @@ main:
 
     # Writing values to pmpcfg0 to change AdrMode to 2 or 3
     # pmpadrdec[0]
-    li t0, 0x0000000010
+    # li t0, 0x0000000010
+    # csrw pmpcfg0, t0
+    # pmpadrdec[0]
+    li t0, 0x0000000090
     csrw pmpcfg0, t0
     # pmpadrdec[1]
     li t0, 0x0000001800
@@ -16,7 +19,10 @@ main:
     li t0, 0x0000180000
     csrw pmpcfg0, t0
     # pmpadrdec[4]
-    li t0, 0x1000000000
+    # li t0, 0x1000000000
+    # csrw pmpcfg0, t0
+    # pmpadrdec[0]
+    li t0, 0x9000000000
     csrw pmpcfg0, t0
 
     j done
