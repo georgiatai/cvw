@@ -214,7 +214,7 @@ int main()
     genFmaTests(speExponents, speFracts, 0, "fma_special_rz", "// FMA Special tests for zero, NaN, and Inf, positive, RZ", 0, 1, 1, 1);
     genFmaTests(speExponents, speFracts, 1, "fma_special_rz", "// FMA Special tests for zero, NaN, and Inf, signed, RZ", 0, 1, 1, 1);
 
-    oftfloat_roundingMode = softfloat_round_near_even; 
+    softfloat_roundingMode = softfloat_round_near_even; 
     genFmaTests(speExponents, speFracts, 0, "fma_special_rne", "// FMA Special tests for zero, NaN, and Inf, positive, RNE", 1, 1, 1, 1);
     genFmaTests(speExponents, speFracts, 1, "fma_special_rne", "// FMA Special tests for zero, NaN, and Inf, signed, RNE", 1, 1, 1, 1);
 
