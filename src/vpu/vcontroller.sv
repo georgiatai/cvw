@@ -67,7 +67,7 @@ module vcontroller import cvw::*;  #(parameter cvw_t P) (
   logic [6:0]  lmulDecodedD;
 
   logic [2:0]  VEUTypeD;                  // type of EU an instruction needs (INT, FP, LSU)
-  logic [3:0]  VOpClassD;                 // execution block requirement for the EU
+  logic [4:0]  VOpClassD;                 // execution block requirement for the EU
   logic [5:0]  VLSModeD;                  // addressing modes for load/store
   logic        VReductionD;               // instr is a reduction op
   logic [1:0]  VdEEWD, Vs1EEWD, Vs2EEWD;  // effective element width of Vd/Vs1/Vs2

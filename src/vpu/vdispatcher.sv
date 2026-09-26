@@ -37,7 +37,7 @@ module vdispatcher import cvw::*;  #(parameter cvw_t P) (
   input  logic [6:0]  lmulDecodedD,
   // EU requirements
   input  logic [2:0]  VEUTypeD,                // type of EU an instruction needs (INT, FP, LSU)
-  input  logic [3:0]  VOpClassD,               // execution block requirement for the EU
+  input  logic [4:0]  VOpClassD,               // execution block requirement for the EU
   input  logic [5:0]  VLSModeD,                // addressing modes for load/store
   // hand shaking controls
   output logic [P.VPU_MAX_EU-1:0] ControllerValidD,
@@ -61,9 +61,10 @@ module vdispatcher import cvw::*;  #(parameter cvw_t P) (
 
   // What each execution unit can carry out
   // *** move these to the configuration when the execution units are instantiated
-  localparam logic [P.VPU_MAX_EU*3-1:0]  VEU_TYPES   = '1;   // integer, floating point, memory
-  localparam logic [P.VPU_MAX_EU*16-1:0] VEU_CLASSES = '1;   // operation classes, indexed by VOpClassD
-  localparam logic [P.VPU_MAX_EU*6-1:0]  VEU_MODES   = '1;   // load/store addressing modes
+  // Indexed [EU][capability]
+  localparam logic [P.VPU_MAX_EU-1:0][2:0]  VEU_TYPES   = '1;   // integer, floating point, memory
+  localparam logic [P.VPU_MAX_EU-1:0][31:0] VEU_CLASSES = '1;   // operation classes, indexed by VOpClassD
+  localparam logic [P.VPU_MAX_EU-1:0][5:0]  VEU_MODES   = '1;   // load/store addressing modes
 
   logic [P.VPU_MAX_EU-1:0] SelectedD;
   logic [P.VPU_MAX_EU-1:0] EligibleD;          // units that can carry out this instruction
@@ -71,8 +72,8 @@ module vdispatcher import cvw::*;  #(parameter cvw_t P) (
   logic                    AnyExecutionUnitReadyD;
 
   for (genvar i = 0; i < P.VPU_MAX_EU; i++) begin : eligibility
-    assign EligibleD[i] = |(VEUTypeD & VEU_TYPES[i*3 +: 3]) & VEU_CLASSES[i*16 + VOpClassD] &
-                          ((VLSModeD & ~VEU_MODES[i*6 +: 6]) == 6'b0);
+    assign EligibleD[i] = |(VEUTypeD & VEU_TYPES[i]) & VEU_CLASSES[i][VOpClassD] &
+                          ((VLSModeD & ~VEU_MODES[i]) == 6'b0);
   end
 
   // Selection mechanism is currently priority encoder.  Should be round robin. *** fix me later.

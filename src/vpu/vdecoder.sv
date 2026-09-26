@@ -47,7 +47,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   output logic [2:0]  Funct3D,
   output logic        VWriteIntD, VWriteFPD, VRegWriteD,
   output logic [2:0]  VEUTypeD,                 // type of EU an instruction needs (INT, FP, LSU)
-  output logic [3:0]  VOpClassD,                // execution block requirement for the EU
+  output logic [4:0]  VOpClassD,                // execution block requirement for the EU, VOPCLASS_* below
   output logic [5:0]  VLSModeD,                 // addressing modes for load/store
   output logic        VReductionD,              // instr is a reduction op
   output logic [1:0]  VdEEWD, Vs1EEWD, Vs2EEWD, // effective element width of Vd/Vs1/Vs2
@@ -168,7 +168,29 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   // execution unit class
   localparam logic [2:0] VEUTYPE_INT = 3'b001, VEUTYPE_FP = 3'b010, VEUTYPE_MEM = 3'b100;
 
-  `define VEUCTRLW 11
+  // Operation classes, the execution block an instruction needs.  Widening forms share the class of
+  // the base operation; the EEW fields carry the width.  01100-01111 are free for Zvbb/Zvk.
+  localparam logic [4:0] VOPCLASS_ADD      = 5'b00000,  // add/sub incl. saturating, averaging, carry; and/or/xor; vmslt/le/gt; vredsum
+                         VOPCLASS_MOVE     = 5'b00001,  // merge, move, mask logical, and/or/xor reductions, scalar and whole reg moves
+                         VOPCLASS_EXT      = 5'b00010,  // vzext, vsext
+                         VOPCLASS_SHIFT    = 5'b00011,  // sll, srl, sra, ssrl, ssra
+                         VOPCLASS_MINMAX   = 5'b00100,  // min, max, vmseq, vmsne, min/max reductions
+                         VOPCLASS_MUL      = 5'b00101,  // multiply, multiply-add, vsmul
+                         VOPCLASS_DIV      = 5'b00110,  // divide, remainder
+                         VOPCLASS_NARROW   = 5'b00111,  // vnsrl, vnsra, vnclip
+                         VOPCLASS_SLIDE    = 5'b01000,  // slides, including vfslide1up/down
+                         VOPCLASS_GATHER   = 5'b01001,  // vrgather, vrgatherei16
+                         VOPCLASS_COMPRESS = 5'b01010,  // vcompress
+                         VOPCLASS_MASK     = 5'b01011,  // vcpop, vfirst, vmsbf/if/of, viota, vid
+                         VOPCLASS_FMA      = 5'b10000,  // FP add, sub, mul, multiply-add, sum reductions
+                         VOPCLASS_FDIV     = 5'b10001,  // FP divide, sqrt
+                         VOPCLASS_FCVT     = 5'b10010,  // FP conversions
+                         VOPCLASS_FCMP     = 5'b10011,  // FP min, max, compares, min/max reductions
+                         VOPCLASS_FMISC    = 5'b10100,  // FP sign inject, move, merge, classify, estimates
+                         VOPCLASS_LS       = 5'b11000;  // loads, stores
+
+  `define VOPERANDW 7                           // operand controls: Reduction_VdEEW_Vs1EEW_Vs2EEW
+  `define VEUCTRLW (5 + `VOPERANDW)             // VOpClass, then the operand controls
 
   logic [7:0]           SupportedFunct6D;       // members this family defines, one bit per funct6[2:0]
   logic [`VEUCTRLW-1:0] VEUControlsD;
@@ -270,127 +292,135 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   always_comb
     if      (OPIVVD)
       casez (Funct6D)
-        6'b0000?0: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vadd vsub
-        6'b0001??: VEUControlsD = `VEUCTRLW'b0001_0_00_00_00;   // vmax vmaxu vmin vminu
-        6'b0010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vand vor vxor
-        6'b001100: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vrgather
-        6'b001110: VEUControlsD = `VEUCTRLW'b0100_0_00_11_00;   // vrgatherei16
-        6'b0100?0: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vadc vsbc
-        6'b0100?1: VEUControlsD = `VEUCTRLW'b0000_0_10_00_00;   // vmadc vmsbc
-        6'b010111: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vmerge vmv
-        6'b011???: VEUControlsD = `VEUCTRLW'b0001_0_10_00_00;   // vmseq vmsle vmsleu vmslt vmsltu vmsne
-        6'b1000??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsadd vsaddu vssub vssubu
-        6'b100101: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsll
-        6'b100111: VEUControlsD = `VEUCTRLW'b0010_0_00_00_00;   // vsmul
-        6'b1010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsra vsrl vssra vssrl
-        6'b1011??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_01;   // vnclip.w vnclipu.w vnsra.w vnsrl.w
-        6'b11000?: VEUControlsD = `VEUCTRLW'b0000_1_01_00_00;   // vwredsum vwredsumu
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b0000?0: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vadd vsub
+        6'b0001??: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b0_00_00_00};   // vmax vmaxu vmin vminu
+        6'b0010??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vand vor vxor
+        6'b001100: VEUControlsD = {VOPCLASS_GATHER,   `VOPERANDW'b0_00_00_00};   // vrgather
+        6'b001110: VEUControlsD = {VOPCLASS_GATHER,   `VOPERANDW'b0_00_11_00};   // vrgatherei16
+        6'b0100?0: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vadc vsbc
+        6'b0100?1: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmadc vmsbc
+        6'b010111: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00};   // vmerge vmv
+        6'b01100?: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b0_10_00_00};   // vmseq vmsne
+        6'b01101?: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmslt vmsltu
+        6'b0111??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmsle vmsleu
+        6'b1000??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vsadd vsaddu vssub vssubu
+        6'b100101: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsll
+        6'b100111: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vsmul
+        6'b1010??: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsra vsrl vssra vssrl
+        6'b1011??: VEUControlsD = {VOPCLASS_NARROW,   `VOPERANDW'b0_00_00_01};   // vnclip.w vnclipu.w vnsra.w vnsrl.w
+        6'b11000?: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b1_01_00_00};   // vwredsum vwredsumu
+        default:   VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};
       endcase
     else if (OPIVXD)
       casez (Funct6D)
-        6'b0000??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vadd vrsub vsub
-        6'b0001??: VEUControlsD = `VEUCTRLW'b0001_0_00_00_00;   // vmax vmaxu vmin vminu
-        6'b0010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vand vor vxor
-        6'b0011??: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vrgather vslidedown vslideup
-        6'b0100?0: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vadc vsbc
-        6'b0100?1: VEUControlsD = `VEUCTRLW'b0000_0_10_00_00;   // vmadc vmsbc
-        6'b010111: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vmerge vmv
-        6'b011???: VEUControlsD = `VEUCTRLW'b0001_0_10_00_00;   // vmseq vmsgt vmsgtu vmsle vmsleu vmslt vmsltu vmsne
-        6'b1000??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsadd vsaddu vssub vssubu
-        6'b100101: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsll
-        6'b100111: VEUControlsD = `VEUCTRLW'b0010_0_00_00_00;   // vsmul
-        6'b1010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsra vsrl vssra vssrl
-        6'b1011??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_01;   // vnclip.w vnclipu.w vnsra.w vnsrl.w
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b0000??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vadd vrsub vsub
+        6'b0001??: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b0_00_00_00};   // vmax vmaxu vmin vminu
+        6'b0010??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vand vor vxor
+        6'b001100: VEUControlsD = {VOPCLASS_GATHER,   `VOPERANDW'b0_00_00_00};   // vrgather
+        6'b00111?: VEUControlsD = {VOPCLASS_SLIDE,    `VOPERANDW'b0_00_00_00};   // vslidedown vslideup
+        6'b0100?0: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vadc vsbc
+        6'b0100?1: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmadc vmsbc
+        6'b010111: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00};   // vmerge vmv
+        6'b01100?: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b0_10_00_00};   // vmseq vmsne
+        6'b01101?: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmslt vmsltu
+        6'b0111??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmsgt vmsgtu vmsle vmsleu
+        6'b1000??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vsadd vsaddu vssub vssubu
+        6'b100101: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsll
+        6'b100111: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vsmul
+        6'b1010??: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsra vsrl vssra vssrl
+        6'b1011??: VEUControlsD = {VOPCLASS_NARROW,   `VOPERANDW'b0_00_00_01};   // vnclip.w vnclipu.w vnsra.w vnsrl.w
+        default:   VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};
       endcase
     else if (OPIVID)
       casez (Funct6D)
-        6'b0000??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vadd vrsub
-        6'b0010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vand vor vxor
-        6'b0011??: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vrgather vslidedown vslideup
-        6'b010000: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vadc
-        6'b010001: VEUControlsD = `VEUCTRLW'b0000_0_10_00_00;   // vmadc
-        6'b010111: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vmerge vmv
-        6'b011???: VEUControlsD = `VEUCTRLW'b0001_0_10_00_00;   // vmseq vmsgt vmsgtu vmsle vmsleu vmsne
-        6'b100111: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vmv1r vmv2r vmv4r vmv8r
-        6'b100?0?: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsadd vsaddu vsll
-        6'b1010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vsra vsrl vssra vssrl
-        6'b1011??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_01;   // vnclip.w vnclipu.w vnsra.w vnsrl.w
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b0000??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vadd vrsub
+        6'b0010??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vand vor vxor
+        6'b001100: VEUControlsD = {VOPCLASS_GATHER,   `VOPERANDW'b0_00_00_00};   // vrgather
+        6'b00111?: VEUControlsD = {VOPCLASS_SLIDE,    `VOPERANDW'b0_00_00_00};   // vslidedown vslideup
+        6'b010000: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vadc
+        6'b010001: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmadc
+        6'b010111: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00};   // vmerge vmv
+        6'b01100?: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b0_10_00_00};   // vmseq vmsne
+        6'b0111??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_10_00_00};   // vmsgt vmsgtu vmsle vmsleu
+        6'b10000?: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vsadd vsaddu
+        6'b100101: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsll
+        6'b1010??: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsra vsrl vssra vssrl
+        6'b1011??: VEUControlsD = {VOPCLASS_NARROW,   `VOPERANDW'b0_00_00_01};   // vnclip.w vnclipu.w vnsra.w vnsrl.w
+        default:   VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vmv<nr>r is unary, decoded below
       endcase
     else if (OPMVVD)
       casez (Funct6D)
-        6'b000???: VEUControlsD = `VEUCTRLW'b0000_1_00_00_00;   // vredand vredmax vredmaxu vredmin vredminu vredor vredsum vre
-        6'b0010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vaadd vaaddu vasub vasubu
-        6'b010010: VEUControlsD = `VEUCTRLW'b0000_0_00_00_11;   // vsext vzext
-        6'b010111: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vcompress
-        6'b011???: VEUControlsD = `VEUCTRLW'b0000_0_10_10_10;   // vmand vmandn vmnand vmnor vmor vmorn vmxnor vmxor
-        6'b1000??: VEUControlsD = `VEUCTRLW'b0011_0_00_00_00;   // vdiv vdivu vrem vremu
-        6'b1001??: VEUControlsD = `VEUCTRLW'b0010_0_00_00_00;   // vmul vmulh vmulhsu vmulhu
-        6'b101?01: VEUControlsD = `VEUCTRLW'b0010_0_00_00_00;   // vmacc vmadd
-        6'b101?11: VEUControlsD = `VEUCTRLW'b0010_0_00_00_01;   // vnmsac vnmsub
-        6'b1100??: VEUControlsD = `VEUCTRLW'b0000_0_01_00_00;   // vwadd vwaddu vwsub vwsubu
-        6'b1101??: VEUControlsD = `VEUCTRLW'b0000_0_01_00_01;   // vwadd.w vwaddu.w vwsub.w vwsubu.w
-        6'b111???: VEUControlsD = `VEUCTRLW'b0010_0_01_00_00;   // vwmacc vwmaccsu vwmaccu vwmul vwmulsu vwmulu
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b000000: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b1_00_00_00};   // vredsum
+        6'b000001: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b1_00_00_00};   // vredand
+        6'b00001?: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b1_00_00_00};   // vredor vredxor
+        6'b0001??: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b1_00_00_00};   // vredmax vredmaxu vredmin vredminu
+        6'b0010??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vaadd vaaddu vasub vasubu
+        6'b010111: VEUControlsD = {VOPCLASS_COMPRESS, `VOPERANDW'b0_00_00_00};   // vcompress
+        6'b011???: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_10_10_10};   // vmand vmandn vmnand vmnor vmor vmorn vmxnor vmxor
+        6'b1000??: VEUControlsD = {VOPCLASS_DIV,      `VOPERANDW'b0_00_00_00};   // vdiv vdivu vrem vremu
+        6'b1001??: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmul vmulh vmulhsu vmulhu
+        6'b101?01: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmacc vmadd
+        6'b101?11: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_01};   // vnmsac vnmsub
+        6'b1100??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_00};   // vwadd vwaddu vwsub vwsubu
+        6'b1101??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_01};   // vwadd.w vwaddu.w vwsub.w vwsubu.w
+        6'b111???: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_01_00_00};   // vwmacc vwmaccsu vwmaccu vwmul vwmulsu vwmulu
+        default:   VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vwxunary0, vxunary0, vmunary0 decoded below
       endcase
     else if (OPMVXD)
       casez (Funct6D)
-        6'b0010??: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vaadd vaaddu vasub vasubu
-        6'b00111?: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vslide1down vslide1up
-        6'b010000: VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // vmv
-        6'b1000??: VEUControlsD = `VEUCTRLW'b0011_0_00_00_00;   // vdiv vdivu vrem vremu
-        6'b1001??: VEUControlsD = `VEUCTRLW'b0010_0_00_00_00;   // vmul vmulh vmulhsu vmulhu
-        6'b101?01: VEUControlsD = `VEUCTRLW'b0010_0_00_00_00;   // vmacc vmadd
-        6'b101?11: VEUControlsD = `VEUCTRLW'b0010_0_00_00_01;   // vnmsac vnmsub
-        6'b1100??: VEUControlsD = `VEUCTRLW'b0000_0_01_00_00;   // vwadd vwaddu vwsub vwsubu
-        6'b1101??: VEUControlsD = `VEUCTRLW'b0000_0_01_00_01;   // vwadd.w vwaddu.w vwsub.w vwsubu.w
-        6'b111???: VEUControlsD = `VEUCTRLW'b0010_0_01_00_00;   // vwmacc vwmaccsu vwmaccu vwmaccus vwmul vwmulsu vwmulu
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b0010??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vaadd vaaddu vasub vasubu
+        6'b00111?: VEUControlsD = {VOPCLASS_SLIDE,    `VOPERANDW'b0_00_00_00};   // vslide1down vslide1up
+        6'b010000: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00};   // vmv.s.x
+        6'b1000??: VEUControlsD = {VOPCLASS_DIV,      `VOPERANDW'b0_00_00_00};   // vdiv vdivu vrem vremu
+        6'b1001??: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmul vmulh vmulhsu vmulhu
+        6'b101?01: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmacc vmadd
+        6'b101?11: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_01};   // vnmsac vnmsub
+        6'b1100??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_00};   // vwadd vwaddu vwsub vwsubu
+        6'b1101??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_01};   // vwadd.w vwaddu.w vwsub.w vwsubu.w
+        6'b111???: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_01_00_00};   // vwmacc vwmaccsu vwmaccu vwmaccus vwmul vwmulsu vwmulu
+        default:   VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};
       endcase
     else if (OPFVVD)
       casez (Funct6D)
-        6'b0000?0: VEUControlsD = `VEUCTRLW'b0110_0_00_00_00;   // vfadd vfsub
-        6'b0000?1: VEUControlsD = `VEUCTRLW'b0110_1_00_00_00;   // vfredosum vfredusum
-        6'b0001?0: VEUControlsD = `VEUCTRLW'b1001_0_00_00_00;   // vfmax vfmin
-        6'b0001?1: VEUControlsD = `VEUCTRLW'b1001_1_00_00_00;   // vfredmax vfredmin
-        6'b0010??: VEUControlsD = `VEUCTRLW'b1010_0_00_00_00;   // vfsgnj vfsgnjn vfsgnjx
-        6'b010000: VEUControlsD = `VEUCTRLW'b1010_0_00_00_00;   // vfmv
-        6'b011???: VEUControlsD = `VEUCTRLW'b1001_0_00_00_00;   // vmfeq vmfle vmflt vmfne
-        6'b100000: VEUControlsD = `VEUCTRLW'b0111_0_00_00_00;   // vfdiv
-        6'b100100: VEUControlsD = `VEUCTRLW'b0110_0_00_00_00;   // vfmul
-        6'b101??0: VEUControlsD = `VEUCTRLW'b0110_0_00_00_00;   // vfmacc vfmadd vfmsac vfmsub
-        6'b101??1: VEUControlsD = `VEUCTRLW'b0110_0_00_00_01;   // vfnmacc vfnmadd vfnmsac vfnmsub
-        6'b1100?0: VEUControlsD = `VEUCTRLW'b0110_0_01_00_00;   // vfwadd vfwsub
-        6'b1100?1: VEUControlsD = `VEUCTRLW'b0110_1_01_00_00;   // vfwredosum vfwredusum
-        6'b1101?0: VEUControlsD = `VEUCTRLW'b0110_0_01_00_01;   // vfwadd.w vfwsub.w
-        6'b111???: VEUControlsD = `VEUCTRLW'b0110_0_01_00_00;   // vfwmacc vfwmsac vfwmul vfwnmacc vfwnmsac
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b0000?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfadd vfsub
+        6'b0000?1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b1_00_00_00};   // vfredosum vfredusum
+        6'b0001?0: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b0_00_00_00};   // vfmax vfmin
+        6'b0001?1: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b1_00_00_00};   // vfredmax vfredmin
+        6'b0010??: VEUControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00};   // vfsgnj vfsgnjn vfsgnjx
+        6'b011???: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b0_10_00_00};   // vmfeq vmfle vmflt vmfne
+        6'b100000: VEUControlsD = {VOPCLASS_FDIV,     `VOPERANDW'b0_00_00_00};   // vfdiv
+        6'b100100: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmul
+        6'b101??0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmacc vfmadd vfmsac vfmsub
+        6'b101??1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_01};   // vfnmacc vfnmadd vfnmsac vfnmsub
+        6'b1100?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwadd vfwsub
+        6'b1100?1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b1_01_00_00};   // vfwredosum vfwredusum
+        6'b1101?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_01};   // vfwadd.w vfwsub.w
+        6'b111???: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwmacc vfwmsac vfwmul vfwnmacc vfwnmsac
+        default:   VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vwfunary0, vfunary0, vfunary1 decoded below
       endcase
     else if (OPFVFD)
       casez (Funct6D)
-        6'b0000?0: VEUControlsD = `VEUCTRLW'b0110_0_00_00_00;   // vfadd vfsub
-        6'b0001?0: VEUControlsD = `VEUCTRLW'b1001_0_00_00_00;   // vfmax vfmin
-        6'b0010??: VEUControlsD = `VEUCTRLW'b1010_0_00_00_00;   // vfsgnj vfsgnjn vfsgnjx
-        6'b00111?: VEUControlsD = `VEUCTRLW'b0100_0_00_00_00;   // vfslide1down vfslide1up
-        6'b010???: VEUControlsD = `VEUCTRLW'b1010_0_00_00_00;   // vfmerge vfmv
-        6'b011???: VEUControlsD = `VEUCTRLW'b1001_0_00_00_00;   // vmfeq vmfge vmfgt vmfle vmflt vmfne
-        6'b10000?: VEUControlsD = `VEUCTRLW'b0111_0_00_00_00;   // vfdiv vfrdiv
-        6'b1001??: VEUControlsD = `VEUCTRLW'b0110_0_00_00_00;   // vfmul vfrsub
-        6'b101??0: VEUControlsD = `VEUCTRLW'b0110_0_00_00_00;   // vfmacc vfmadd vfmsac vfmsub
-        6'b101??1: VEUControlsD = `VEUCTRLW'b0110_0_00_00_01;   // vfnmacc vfnmadd vfnmsac vfnmsub
-        6'b1100?0: VEUControlsD = `VEUCTRLW'b0110_0_01_00_00;   // vfwadd vfwsub
-        6'b1101?0: VEUControlsD = `VEUCTRLW'b0110_0_01_00_01;   // vfwadd.w vfwsub.w
-        6'b111???: VEUControlsD = `VEUCTRLW'b0110_0_01_00_00;   // vfwmacc vfwmsac vfwmul vfwnmacc vfwnmsac
-        default:   VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;
+        6'b0000?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfadd vfsub
+        6'b0001?0: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b0_00_00_00};   // vfmax vfmin
+        6'b0010??: VEUControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00};   // vfsgnj vfsgnjn vfsgnjx
+        6'b00111?: VEUControlsD = {VOPCLASS_SLIDE,    `VOPERANDW'b0_00_00_00};   // vfslide1down vfslide1up
+        6'b010???: VEUControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00};   // vfmv.s.f vfmerge vfmv.v.f
+        6'b011???: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b0_10_00_00};   // vmfeq vmfge vmfgt vmfle vmflt vmfne
+        6'b10000?: VEUControlsD = {VOPCLASS_FDIV,     `VOPERANDW'b0_00_00_00};   // vfdiv vfrdiv
+        6'b1001??: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmul vfrsub
+        6'b101??0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmacc vfmadd vfmsac vfmsub
+        6'b101??1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_01};   // vfnmacc vfnmadd vfnmsac vfnmsub
+        6'b1100?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwadd vfwsub
+        6'b1101?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_01};   // vfwadd.w vfwsub.w
+        6'b111???: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwmacc vfwmsac vfwmul vfwnmacc vfwnmsac
+        default:   VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};
       endcase
-    else           VEUControlsD = `VEUCTRLW'b0000_0_00_00_00;   // funct3 = 111 is vset{i}vl{i}
+    else           VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // funct3 = 111 is vset{i}vl{i}
 
 
   // unary, vs1 is sub-decode
   always_comb begin
-    VUnaryControlsD = `VEUCTRLW'b0000_0_00_00_00;
+    VUnaryControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};
     SupportedUnaryD = 1'b0;
     VUnaryWriteIntD = 1'b0;
     VUnaryWriteFPD  = 1'b0;
@@ -398,53 +428,53 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
     if (OPMVVD & (Funct6D == 6'b010000)) begin            // VWXUNARY0, all three write an integer register
       VUnaryWriteIntD = 1'b1;
       case (Vs1D)
-        5'b00000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0000_0_00_00_00; end // vmv.x.s
-        5'b10000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_00_00_10; end // vcpop.m
-        5'b10001: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_00_00_10; end // vfirst.m
+        5'b00000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00}; end // vmv.x.s
+        5'b10000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_00_00_10}; end // vcpop.m
+        5'b10001: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_00_00_10}; end // vfirst.m
         default: ;                                                                                // reserved vs1
       endcase
     end else if (OPMVVD & (Funct6D == 6'b010010)) begin   // VXUNARY0
       SupportedUnaryD = (Vs1D[4:3] == 2'b00) & (Vs1D[2:1] != 2'b00);
-      VUnaryControlsD = `VEUCTRLW'b0000_0_00_00_11;                                               // vzext, vsext
+      VUnaryControlsD = {VOPCLASS_EXT,      `VOPERANDW'b0_00_00_11};                                               // vzext, vsext
     end else if (OPMVVD & (Funct6D == 6'b010100)) begin   // VMUNARY0
       case (Vs1D)
-        5'b00001: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_10_00_10; end // vmsbf.m
-        5'b00010: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_10_00_10; end // vmsof.m
-        5'b00011: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_10_00_10; end // vmsif.m
-        5'b10000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_00_00_10; end // viota.m
-        5'b10001: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0101_0_00_00_00; end // vid.v
+        5'b00001: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_10_00_10}; end // vmsbf.m
+        5'b00010: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_10_00_10}; end // vmsof.m
+        5'b00011: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_10_00_10}; end // vmsif.m
+        5'b10000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_00_00_10}; end // viota.m
+        5'b10001: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_MASK,     `VOPERANDW'b0_00_00_00}; end // vid.v
         default: ;                                                                                // reserved vs1
       endcase
     end else if (OPFVVD & (Funct6D == 6'b010000)) begin   // VWFUNARY0
       SupportedUnaryD = (Vs1D == 5'b00000);
       VUnaryWriteFPD  = 1'b1;
-      VUnaryControlsD = `VEUCTRLW'b1010_0_00_00_00;                                               // vfmv.f.s
+      VUnaryControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00};                                               // vfmv.f.s
     end else if (OPFVVD & (Funct6D == 6'b010010)) begin   // VFUNARY0
       case (Vs1D[4:3])
       // 7:rtz.x 6:rtz.xu 5:- 4:f.f 3:f.x 2:f.xu 1:x.f 0:xu.f
-        2'b00:   begin SupportedCvtD = 8'b1100_1111; VUnaryControlsD = `VEUCTRLW'b1000_0_00_00_00; end // vfcvt
-        2'b01:   begin SupportedCvtD = 8'b1101_1111; VUnaryControlsD = `VEUCTRLW'b1000_0_01_00_00; end // vfwcvt
-        2'b10:   begin SupportedCvtD = 8'b1111_1111; VUnaryControlsD = `VEUCTRLW'b1000_0_00_00_01; end // vfncvt
+        2'b00:   begin SupportedCvtD = 8'b1100_1111; VUnaryControlsD = {VOPCLASS_FCVT,     `VOPERANDW'b0_00_00_00}; end // vfcvt
+        2'b01:   begin SupportedCvtD = 8'b1101_1111; VUnaryControlsD = {VOPCLASS_FCVT,     `VOPERANDW'b0_01_00_00}; end // vfwcvt
+        2'b10:   begin SupportedCvtD = 8'b1111_1111; VUnaryControlsD = {VOPCLASS_FCVT,     `VOPERANDW'b0_00_00_01}; end // vfncvt
         default: ;                                                                                     // reserved width group
       endcase
       SupportedUnaryD = SupportedCvtD[Vs1D[2:0]];
     end else if (OPFVVD & (Funct6D == 6'b010011)) begin   // VFUNARY1
       case (Vs1D)
-        5'b00000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b0111_0_00_00_00; end // vfsqrt.v, on the divider
-        5'b00100: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b1010_0_00_00_00; end // vfrsqrt7.v
-        5'b00101: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b1010_0_00_00_00; end // vfrec7.v
-        5'b10000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = `VEUCTRLW'b1010_0_00_00_00; end // vfclass.v
+        5'b00000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_FDIV,     `VOPERANDW'b0_00_00_00}; end // vfsqrt.v, on the divider
+        5'b00100: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00}; end // vfrsqrt7.v
+        5'b00101: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00}; end // vfrec7.v
+        5'b10000: begin SupportedUnaryD = 1'b1; VUnaryControlsD = {VOPCLASS_FMISC,    `VOPERANDW'b0_00_00_00}; end // vfclass.v
         default: ;                                                                                // reserved vs1
       endcase
     end else if (OPIVID & (Funct6D == 6'b100111)) begin   // vmv<nr>r.v, vs1 holds nr-1
       SupportedUnaryD = (Vs1D == 5'd0) | (Vs1D == 5'd1) | (Vs1D == 5'd3) | (Vs1D == 5'd7);
-      VUnaryControlsD = `VEUCTRLW'b0100_0_00_00_00;
+      VUnaryControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00};
     end
   end
 
   // Load/store runs in LSU, and unary overrides family entry
   assign {VOpClassD, VReductionD, VdEEWD, Vs1EEWD, Vs2EEWD} =
-    (OpD == 7'b0000111) | (OpD == 7'b0100111) ? `VEUCTRLW'b1011_0_00_00_00 :
+    (OpD == 7'b0000111) | (OpD == 7'b0100111) ? {VOPCLASS_LS, `VOPERANDW'b0_00_00_00} :
     VUnaryD                                   ? VUnaryControlsD : VEUControlsD;
 
   // Legality of instruction decode
