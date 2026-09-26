@@ -50,8 +50,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   output logic [4:0]  VOpClassD,                // execution block requirement for the EU, VOPCLASS_* below
   output logic [5:0]  VLSModeD,                 // addressing modes for load/store
   output logic        VReductionD,              // instr is a reduction op
-  output logic [1:0]  VdEEWD, Vs1EEWD, Vs2EEWD, // effective element width of Vd/Vs1/Vs2
-  output logic [2:0]  VLSEEWD,                  // effective element width of load/store
+  output logic [2:0]  VdEEWD, Vs1EEWD, Vs2EEWD, // log2(EEW) of Vd/Vs1/Vs2: 000 mask (EEW = 1), 011 8b ... 110 64b
   output logic [1:0]  VALUSrcAD,
   output logic        VALUSrcBD,
   output logic        VALUResultD,
@@ -94,23 +93,26 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   logic [4:0] LSumopD;                   // unit-stride sub-opcode
   logic       MewD;                      // element width extension (mew=1 reserved)
   logic       SupportedEEWD;             // element width is defined and fits in ELEN
+  logic [2:0] VLSEEWD;                   // log2(EEW) named by the width field
+  logic       VLoadStoreD;               // vector load or store opcode
 
   assign NfD     = InstrD[31:29];
   assign MewD    = InstrD[28];
   assign MopD    = InstrD[27:26];
   assign LSumopD = InstrD[24:20];
+  assign VLoadStoreD = (OpD == 7'b0000111) | (OpD == 7'b0100111);
 
   // Vls width field to element width
   always_comb begin
-    VLSEEWD        = 3'b000;
+    VLSEEWD       = 3'd3;
     SupportedEEWD = 1'b0;
     if (~MewD) begin
       case (Funct3D)
-        3'b000:  begin VLSEEWD = 3'd0; SupportedEEWD = 1'b1;            end // 8b
-        3'b101:  begin VLSEEWD = 3'd1; SupportedEEWD = (P.ELEN >= 16);  end // 16b
-        3'b110:  begin VLSEEWD = 3'd2; SupportedEEWD = (P.ELEN >= 32);  end // 32b
-        3'b111:  begin VLSEEWD = 3'd3; SupportedEEWD = (P.ELEN >= 64);  end // 64b
-        default: begin VLSEEWD = 3'd0; SupportedEEWD = 1'b0;            end
+        3'b000:  begin VLSEEWD = 3'd3; SupportedEEWD = 1'b1;            end // 8b
+        3'b101:  begin VLSEEWD = 3'd4; SupportedEEWD = (P.ELEN >= 16);  end // 16b
+        3'b110:  begin VLSEEWD = 3'd5; SupportedEEWD = (P.ELEN >= 32);  end // 32b
+        3'b111:  begin VLSEEWD = 3'd6; SupportedEEWD = (P.ELEN >= 64);  end // 64b
+        default: begin VLSEEWD = 3'd3; SupportedEEWD = 1'b0;            end
       endcase
     end
   end
@@ -131,7 +133,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   always_comb begin
     VLSModeD  = 6'b000000;
     VLSFunctD = 1'b0;
-    if (SupportedEEWD)
+    if (VLoadStoreD & SupportedEEWD)
       case (MopD)
         2'b00: case (LSumopD)      // unit-stride
                  5'b00000: begin   // vle{8,16,32,64}.v, vse...
@@ -288,7 +290,8 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
 
   // Control signals for EU
   // VEUControlsD = VOpClass_Reduction_VdEEW_Vs1EEW_Vs2EEW
-  // EEW: 00 SEW, 01 2*SEW, 10 mask, 11: width field for load/store, vs1 for vzext/vsext, fixed 16 bits for vrgatherei16
+  // EEW relative to SEW, resolved against vtype below:
+  //   00 SEW, 01 2*SEW, 10 mask, 11: width field for load/store, vs1 for vzext/vsext, fixed 16 bits for vrgatherei16
   always_comb
     if      (OPIVVD)
       casez (Funct6D)
@@ -308,7 +311,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
         6'b100111: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vsmul
         6'b1010??: VEUControlsD = {VOPCLASS_SHIFT,    `VOPERANDW'b0_00_00_00};   // vsra vsrl vssra vssrl
         6'b1011??: VEUControlsD = {VOPCLASS_NARROW,   `VOPERANDW'b0_00_00_01};   // vnclip.w vnclipu.w vnsra.w vnsrl.w
-        6'b11000?: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b1_01_00_00};   // vwredsum vwredsumu
+        6'b11000?: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b1_01_01_00};   // vwredsum vwredsumu
         default:   VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};
       endcase
     else if (OPIVXD)
@@ -355,12 +358,11 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
         6'b00001?: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b1_00_00_00};   // vredor vredxor
         6'b0001??: VEUControlsD = {VOPCLASS_MINMAX,   `VOPERANDW'b1_00_00_00};   // vredmax vredmaxu vredmin vredminu
         6'b0010??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_00_00_00};   // vaadd vaaddu vasub vasubu
-        6'b010111: VEUControlsD = {VOPCLASS_COMPRESS, `VOPERANDW'b0_00_00_00};   // vcompress
+        6'b010111: VEUControlsD = {VOPCLASS_COMPRESS, `VOPERANDW'b0_00_10_00};   // vcompress, vs1 is the mask
         6'b011???: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_10_10_10};   // vmand vmandn vmnand vmnor vmor vmorn vmxnor vmxor
         6'b1000??: VEUControlsD = {VOPCLASS_DIV,      `VOPERANDW'b0_00_00_00};   // vdiv vdivu vrem vremu
         6'b1001??: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmul vmulh vmulhsu vmulhu
-        6'b101?01: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmacc vmadd
-        6'b101?11: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_01};   // vnmsac vnmsub
+        6'b101???: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmacc vmadd vnmsac vnmsub
         6'b1100??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_00};   // vwadd vwaddu vwsub vwsubu
         6'b1101??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_01};   // vwadd.w vwaddu.w vwsub.w vwsubu.w
         6'b111???: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_01_00_00};   // vwmacc vwmaccsu vwmaccu vwmul vwmulsu vwmulu
@@ -373,8 +375,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
         6'b010000: VEUControlsD = {VOPCLASS_MOVE,     `VOPERANDW'b0_00_00_00};   // vmv.s.x
         6'b1000??: VEUControlsD = {VOPCLASS_DIV,      `VOPERANDW'b0_00_00_00};   // vdiv vdivu vrem vremu
         6'b1001??: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmul vmulh vmulhsu vmulhu
-        6'b101?01: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmacc vmadd
-        6'b101?11: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_01};   // vnmsac vnmsub
+        6'b101???: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_00_00_00};   // vmacc vmadd vnmsac vnmsub
         6'b1100??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_00};   // vwadd vwaddu vwsub vwsubu
         6'b1101??: VEUControlsD = {VOPCLASS_ADD,      `VOPERANDW'b0_01_00_01};   // vwadd.w vwaddu.w vwsub.w vwsubu.w
         6'b111???: VEUControlsD = {VOPCLASS_MUL,      `VOPERANDW'b0_01_00_00};   // vwmacc vwmaccsu vwmaccu vwmaccus vwmul vwmulsu vwmulu
@@ -390,10 +391,9 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
         6'b011???: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b0_10_00_00};   // vmfeq vmfle vmflt vmfne
         6'b100000: VEUControlsD = {VOPCLASS_FDIV,     `VOPERANDW'b0_00_00_00};   // vfdiv
         6'b100100: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmul
-        6'b101??0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmacc vfmadd vfmsac vfmsub
-        6'b101??1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_01};   // vfnmacc vfnmadd vfnmsac vfnmsub
+        6'b101???: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmacc vfmadd vfmsac vfmsub vfnmacc vfnmadd vfnmsac vfnmsub
         6'b1100?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwadd vfwsub
-        6'b1100?1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b1_01_00_00};   // vfwredosum vfwredusum
+        6'b1100?1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b1_01_01_00};   // vfwredosum vfwredusum
         6'b1101?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_01};   // vfwadd.w vfwsub.w
         6'b111???: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwmacc vfwmsac vfwmul vfwnmacc vfwnmsac
         default:   VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vwfunary0, vfunary0, vfunary1 decoded below
@@ -408,8 +408,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
         6'b011???: VEUControlsD = {VOPCLASS_FCMP,     `VOPERANDW'b0_10_00_00};   // vmfeq vmfge vmfgt vmfle vmflt vmfne
         6'b10000?: VEUControlsD = {VOPCLASS_FDIV,     `VOPERANDW'b0_00_00_00};   // vfdiv vfrdiv
         6'b1001??: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmul vfrsub
-        6'b101??0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmacc vfmadd vfmsac vfmsub
-        6'b101??1: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_01};   // vfnmacc vfnmadd vfnmsac vfnmsub
+        6'b101???: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_00_00_00};   // vfmacc vfmadd vfmsac vfmsub vfnmacc vfnmadd vfnmsac vfnmsub
         6'b1100?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwadd vfwsub
         6'b1101?0: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_01};   // vfwadd.w vfwsub.w
         6'b111???: VEUControlsD = {VOPCLASS_FMA,      `VOPERANDW'b0_01_00_00};   // vfwmacc vfwmsac vfwmul vfwnmacc vfwnmsac
@@ -473,9 +472,26 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   end
 
   // Load/store runs in LSU, and unary overrides family entry
-  assign {VOpClassD, VReductionD, VdEEWD, Vs1EEWD, Vs2EEWD} =
-    (OpD == 7'b0000111) | (OpD == 7'b0100111) ? {VOPCLASS_LS, `VOPERANDW'b0_00_00_00} :
-    VUnaryD                                   ? VUnaryControlsD : VEUControlsD;
+  // The width field sizes the data for unit-stride and strided, and the index (vs2) for indexed
+  logic [1:0] VdEEWSelD, Vs1EEWSelD, Vs2EEWSelD;   // relative EEW codes from the tables
+
+  assign {VOpClassD, VReductionD, VdEEWSelD, Vs1EEWSelD, Vs2EEWSelD} =
+    VLoadStoreD ? (MopD[0] ? {VOPCLASS_LS, `VOPERANDW'b0_00_00_11} : {VOPCLASS_LS, `VOPERANDW'b0_11_00_00}) :
+    VUnaryD     ? VUnaryControlsD : VEUControlsD;
+
+  // Effective element width, log2(EEW) with 000 for a mask.  vtype is current in Decode because
+  // vset stalls the vector instructions behind it (VPUFrontEndBusyD).
+  logic [2:0] SewD, WideSewD;                      // log2(SEW), log2(2*SEW)
+  logic [2:0] VExtEEWD;                            // vzext/vsext source: vs1[2:1] = 11 SEW/2, 10 SEW/4, 01 SEW/8
+
+  assign SewD     = 3'd3 + VTYPE_REGW[5:3];
+  assign WideSewD = SewD + 3'd1;
+  assign VExtEEWD = SewD - (3'd4 - {1'b0, Vs1D[2:1]});
+
+  // EEW select: 00 SEW, 01 2*SEW, 10 mask, 11 explicit
+  mux4 #(3) VdEEWMux (SewD, WideSewD, 3'b000, VLSEEWD,                           VdEEWSelD,  VdEEWD);   // load/store data
+  mux4 #(3) Vs1EEWMux(SewD, WideSewD, 3'b000, 3'd4,                              Vs1EEWSelD, Vs1EEWD);  // vrgatherei16 index
+  mux4 #(3) Vs2EEWMux(SewD, WideSewD, 3'b000, VLoadStoreD ? VLSEEWD : VExtEEWD, Vs2EEWSelD, Vs2EEWD);  // indexed index, vzext/vsext
 
   // Legality of instruction decode
   assign VFunctD      = SupportedFunct6D[Funct6D[2:0]] & (~VUnaryD | SupportedUnaryD) &
@@ -511,8 +527,8 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   assign {VRegWriteD, VWriteIntD, VWriteFPD, VsetD, VALUResultD, VALUSrcBD, IllegalVPUInstrD} = VControlsD;
 
   // load/store runs in LSU; arithmetic categories set by class above
-  assign VEUTypeD = (OpD == 7'b0000111) | (OpD == 7'b0100111) ? VEUTYPE_MEM :
-                    (OPFVVD | OPFVFD)                         ? VEUTYPE_FP : VEUTYPE_INT;
+  assign VEUTypeD = VLoadStoreD       ? VEUTYPE_MEM :
+                    (OPFVVD | OPFVFD) ? VEUTYPE_FP : VEUTYPE_INT;
 
   // second operand: 00 = vs1, 01 = imm, 10 = rs1 or fs1
   always_comb
