@@ -70,7 +70,7 @@ module vcontroller import cvw::*;  #(parameter cvw_t P) (
   logic [4:0]  VOpClassD;                 // execution block requirement for the EU
   logic [5:0]  VLSModeD;                  // addressing modes for load/store
   logic        VReductionD;               // instr is a reduction op
-  logic [2:0]  VdEEWD, Vs2EEWD, Vs1EEWD;  // log2(EEW) of Vd/Vs2/Vs1, 000 = mask
+  logic [2:0]  VdEEWD, Vs2EEWD, Vs1EEWD;  // log2(EEW) of Vd/Vs2/Vs1, 000 = 1b (mask)
   //logic [2:0]  lmulD;                  // *** should be set by vset* instruction
 
   assign lmulDecodedD = 7'b0001_000; // m1

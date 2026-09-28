@@ -50,7 +50,7 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   output logic [4:0]  VOpClassD,                // execution block requirement for the EU, VOPCLASS_* below
   output logic [5:0]  VLSModeD,                 // addressing modes for load/store
   output logic        VReductionD,              // instr is a reduction op
-  output logic [2:0]  VdEEWD, Vs2EEWD, Vs1EEWD, // log2(EEW) of Vd/Vs2/Vs1: 000 mask (EEW = 1), 011 8b ... 110 64b
+  output logic [2:0]  VdEEWD, Vs2EEWD, Vs1EEWD, // log2(EEW) of Vd/Vs2/Vs1: 000 1b (mask), 011 8b ... 110 64b
   output logic [1:0]  VALUSrcAD,
   output logic        VALUSrcBD,
   output logic        VALUResultD,
@@ -101,6 +101,10 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   assign MopD    = InstrD[27:26];
   assign LSumopD = InstrD[24:20];
   assign VLoadStoreD = (OpD == 7'b0000111) | (OpD == 7'b0100111);
+
+  // vtype element width.  vtype is current in Decode because vset stalls the vector instructions behind it.
+  logic [2:0] SewD;                      // log2(SEW)
+  assign SewD = 3'd3 + VTYPE_REGW[5:3];
 
   // Vls width field to element width
   always_comb begin
@@ -432,7 +436,8 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
         default: ;                                                                                // reserved vs1
       endcase
     end else if (OPMVVD & (Funct6D == 6'b010010)) begin   // VXUNARY0
-      SupportedUnaryD = (Vs1D[4:3] == 2'b00) & (Vs1D[2:1] != 2'b00);
+      SupportedUnaryD = (Vs1D[4:3] == 2'b00) & (Vs1D[2:1] != 2'b00) &
+                        (SewD >= 3'd7 - {1'b0, Vs1D[2:1]});     // source of 8 bits or more: vf2 SEW >= 16, vf4 >= 32, vf8 >= 64
       VUnaryControlsD = {VOPCLASS_EXT,      `VOPERANDW'b0_00_11_00};                                               // vzext, vsext
     end else if (OPMVVD & (Funct6D == 6'b010100)) begin   // VMUNARY0
       case (Vs1D)
@@ -475,14 +480,15 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
   logic [1:0] VdEEWSelD, Vs2EEWSelD, Vs1EEWSelD;   // relative EEW codes from the tables
 
   assign {VOpClassD, VReductionD, VdEEWSelD, Vs2EEWSelD, Vs1EEWSelD} =
-    VLoadStoreD ? (MopD[0] ? {VOPCLASS_LS, `VOPERANDW'b0_00_11_00} : {VOPCLASS_LS, `VOPERANDW'b0_11_00_00}) :
+    VLoadStoreD ? (MopD[0]                                      ? {VOPCLASS_LS, `VOPERANDW'b0_00_11_00} :
+                   (MopD == 2'b00) & (LSumopD == 5'b01011)      ? {VOPCLASS_LS, `VOPERANDW'b0_10_00_00} :
+                                                                  {VOPCLASS_LS, `VOPERANDW'b0_11_00_00}) :
     VUnaryD     ? VUnaryControlsD : VEUControlsD;
 
-  // Effective element width, log2(EEW) with 000 for a mask
-  logic [2:0] SewD, WideSewD;                      // log2(SEW), log2(2*SEW)
+  // Effective element width, log2(EEW): a mask is EEW 1 (000)
+  logic [2:0] WideSewD;                            // log2(2*SEW)
   logic [2:0] VExtEEWD;                            // vzext/vsext source: vs1[2:1] = 11 SEW/2, 10 SEW/4, 01 SEW/8
 
-  assign SewD     = 3'd3 + VTYPE_REGW[5:3];
   assign WideSewD = SewD + 3'd1;
   assign VExtEEWD = SewD - (3'd4 - {1'b0, Vs1D[2:1]});
 
@@ -522,7 +528,30 @@ module vdecoder import cvw::*;  #(parameter cvw_t P) (
     end
 
   // control bits
-  assign {VRegWriteD, VWriteIntD, VWriteFPD, VsetD, VALUResultD, VALUSrcBD, IllegalVPUInstrD} = VControlsD;
+  logic IllegalVEncodingD;                         // not a supported vector encoding
+  logic IllegalVOperandD;                          // an operand is reserved under the current vtype
+
+  assign {VRegWriteD, VWriteIntD, VWriteFPD, VsetD, VALUResultD, VALUSrcBD, IllegalVEncodingD} = VControlsD;
+  assign IllegalVPUInstrD = IllegalVEncodingD | IllegalVOperandD;
+
+  // Reserved operands: element width, group size and alignment, and overlap
+  logic VdEnD, Vs2EnD, Vs1EnD;                     // a vector register is used as an operand
+  logic VScalarMoveD;                              // vmv.s.x, vfmv.s.f, vmv.x.s, vfmv.f.s: element 0 only
+  logic VWholeRegD;                                // vmv<nr>r.v, vl<nr>r.v, vs<nr>r.v
+  logic VdNoOverlapD;                              // vd may not overlap a source, nor v0 when masked
+
+  assign VdEnD  = VRegWriteD | (OpD == 7'b0100111);                                 // written, or store data
+  assign Vs2EnD = VLoadStoreD ? MopD[0] :                                           // load/store: only the index
+                  (OpD == 7'b1010111) & ~VSETD & ~(OPMVVD & (Funct6D == 6'b010100) & (Vs1D == 5'b10001));  // not vid.v
+  assign Vs1EnD = (OPIVVD | OPMVVD | OPFVVD) & ~VUnaryD;
+  assign VScalarMoveD = (OPMVXD | OPFVFD) & (Funct6D == 6'b010000) | VUnaryWriteIntD | VUnaryWriteFPD;
+  assign VWholeRegD   = OPIVID & (Funct6D == 6'b100111) | VLSModeD[5];
+  assign VdNoOverlapD = (VOpClassD == VOPCLASS_GATHER) | (VOpClassD == VOPCLASS_COMPRESS) |
+                        (VOpClassD == VOPCLASS_MASK) | (VOpClassD == VOPCLASS_SLIDE) & ~Funct6D[0];   // slideups
+
+  vreserved #(P) vreserved(.SewD, .VlmulD(VTYPE_REGW[2:0]), .VdD, .Vs2D, .Vs1D, .VdEEWD, .Vs2EEWD, .Vs1EEWD,
+    .VdEnD, .Vs2EnD, .Vs1EnD, .VReductionD, .VScalarMoveD, .VWholeRegD, .NfD(VLoadStoreD ? NfD : Vs1D[2:0]),
+    .VLSModeD, .VmD, .VRegWriteD, .VdNoOverlapD, .IllegalVOperandD);
 
   // load/store runs in LSU; arithmetic categories set by class above
   assign VEUTypeD = VLoadStoreD       ? VEUTYPE_MEM :
