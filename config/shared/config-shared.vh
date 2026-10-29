@@ -96,7 +96,7 @@ localparam FMT2  = (LEN1 > S_LEN) ? 2'd0   : 2'd2;
 localparam BIAS2 = (LEN1 > S_LEN) ? S_BIAS : H_BIAS;
 
 // Vector floating point support
-localparam logic VF_SUPPORTED = ZVE32F_SUPPORTED | ZVE64F_SUPPORTED | ZVE64D_SUPPORTED;
+localparam logic VF_SUPPORTED = ZVE32F_SUPPORTED | ZVE64F_SUPPORTED;
 
 // divider r and rk (bits per digit, bits per cycle)
 localparam LOGR        = $clog2(RADIX);                             // r = log(R) bits per digit
