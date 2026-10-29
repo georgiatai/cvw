@@ -27,7 +27,7 @@
 // and limitations under the License.
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-module wallypipelinedcore import cvw::*, fpu_pkg::*; #(parameter cvw_t P, parameter fpu_t FP) (
+module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
    input  logic                  clk, reset,
    // Privileged
    input  logic                  MTimerInt, MExtInt, SExtInt, MSwInt,
@@ -47,6 +47,11 @@ module wallypipelinedcore import cvw::*, fpu_pkg::*; #(parameter cvw_t P, parame
    output logic                  HMASTLOCK,
    input  logic                  ExternalStall
 );
+
+  // floating point datapath parameters FP extracted from P
+  `include "fpu-parameter-defs.vh"
+
+  // TODO: add vector datapath parameters VP extracted from P
 
   logic                          StallF, StallD, StallE, StallM, StallW;
   logic                          FlushD, FlushE, FlushM, FlushW;

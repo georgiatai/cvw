@@ -7,7 +7,7 @@
 //
 // A component of the Wally configurable RISC-V project.
 //
-// Copyright (C) 2021 Harvey Mudd College & Oklahoma State University
+// Copyright (C) 2026 Harvey Mudd College
 //
 // SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 //
@@ -24,7 +24,7 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 // The floating point datapath takes an fpu_t instead of cvw_t so it does not depend on the rest of the core.
-// The top level fills an fpu_t (config/shared/parameter-defs.vh in Wally) and passes it down as a parameter.
+// fpu-config-shared.vh derives an fpu_t from a few FPU inputs; in Wally, wallypipelinedcore includes fpu-parameter-defs.vh, which sets those inputs from P.
 
 `ifndef FPU_T
 

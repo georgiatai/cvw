@@ -208,7 +208,7 @@ module fpgaTop
   `include "parameter-defs.vh"
 
   // Wally
-  wallypipelinedsoc  #(P, FP)
+  wallypipelinedsoc  #(P)
   wallypipelinedsoc(.clk(CPUCLK), .reset_ext(bus_struct_reset), .reset(),
                     .HRDATAEXT, .HREADYEXT, .HRESPEXT, .HSELEXT,
                     .HCLK(HCLKOpen), .HRESETn(HRESETnOpen),

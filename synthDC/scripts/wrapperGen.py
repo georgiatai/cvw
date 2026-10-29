@@ -35,7 +35,7 @@ with open(fin_path) as fin:
     moduleName = ""
 
     # string that will keep track of the running module header
-    buf = 'import cvw::*;\n`include "config.vh"\n`include "parameter-defs.vh"\n'
+    buf = 'import cvw::*;\n`include "config.vh"\n`include "parameter-defs.vh"\n`include "fpu-parameter-defs.vh"\n'
 
     # are we writing into the buffer
     writeBuf=False

@@ -34,6 +34,7 @@ module testbench_fp;
   parameter string TEST_SIZE="all";
 
   `include "parameter-defs.vh"
+  `include "fpu-parameter-defs.vh"
 
   parameter MAXVECTORS = 8388610;
 
