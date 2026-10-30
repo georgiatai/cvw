@@ -48,11 +48,6 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
    input  logic                  ExternalStall
 );
 
-  // floating point datapath parameters FP extracted from P
-  `include "fpu-parameter-defs.vh"
-
-  // TODO: add vector datapath parameters VP extracted from P
-
   logic                          StallF, StallD, StallE, StallM, StallW;
   logic                          FlushD, FlushE, FlushM, FlushW;
   logic                          TrapM, RetM;
@@ -356,7 +351,7 @@ module wallypipelinedcore import cvw::*; #(parameter cvw_t P) (
 
   // floating point unit
   if (P.F_SUPPORTED) begin : fpu
-    fpu #(P, FP) fpu(
+    fpu #(P) fpu(
       .clk, .reset,
       .FRM_REGW,                           // Rounding mode from CSR
       .InstrD,                             // instruction from IFU

@@ -24,7 +24,8 @@
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
 // The floating point datapath takes an fpu_t instead of cvw_t so it does not depend on the rest of the core.
-// fpu-config-shared.vh derives an fpu_t from a few FPU inputs; in Wally, wallypipelinedcore includes fpu-parameter-defs.vh, which sets those inputs from P.
+// fpu-config-shared.vh derives an fpu_t from a few FPU inputs.
+// In Wally, fpu includes fpu-parameter-defs.vh and vpu includes vfpu-parameter-defs.vh, which set those inputs from cvw_t (P).
 
 `ifndef FPU_T
 

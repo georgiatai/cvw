@@ -27,7 +27,7 @@
 // and limitations under the License.
 ////////////////////////////////////////////////////////////////////////////////////////////////
 
-module fpu import cvw::*, fpu_pkg::*;  #(parameter cvw_t P, parameter fpu_t FP) (
+module fpu import cvw::*;  #(parameter cvw_t P) (
   input  logic                 clk,
   input  logic                 reset,
   // Hazards
@@ -63,6 +63,9 @@ module fpu import cvw::*, fpu_pkg::*;  #(parameter cvw_t P, parameter fpu_t FP) 
   output logic                 FCvtIntW,                           // select FCvtIntRes (to IEU)
   output logic [P.XLEN-1:0]    FIntDivResultW                      // Result from integer division (to IEU)
 );
+
+  // floating point datapath parameters FP extracted from P
+  `include "fpu-parameter-defs.vh"
 
   // RISC-V FPU specifics:
   //    - multiprecision support uses NAN-boxing, putting 1's in unused msbs
