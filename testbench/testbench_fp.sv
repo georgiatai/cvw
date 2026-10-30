@@ -721,7 +721,7 @@ module testbench_fp;
       .ASticky);
   end
 
-  postprocess #(P) postprocess(.Xs(Xs), .Ys(Ys), .PostProcSel(UnitVal[1:0]),
+  postprocess #(FP) postprocess(.Xs(Xs), .Ys(Ys), .PostProcSel(UnitVal[1:0]),
     .OpCtrl(OpCtrlVal), .DivUm(Quot), .DivUe(DivCalcExp),
     .Xm(Xm), .Ym(Ym), .Zm(Zm), .CvtCe(CvtCalcExpE), .DivSticky(DivSticky), .FmaSs(Ss),
     .XNaN(XNaN), .YNaN(YNaN), .ZNaN(ZNaN), .CvtResSubnormUf(CvtResSubnormUfE),

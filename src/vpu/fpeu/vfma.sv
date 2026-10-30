@@ -119,7 +119,7 @@ module vfma import cvw::*, fpu_pkg::*; #(parameter cvw_t P, parameter fpu_t FP) 
   );
 
   // Postprocess: round to OutFmt, TODO: make work with ELEN, make more compact with lane specific operations
-  postprocess #(P) postproc (
+  postprocess #(FP) postproc (
     .Xs, .Ys,
     .Xm, .Ym, .Zm,
     .Frm,

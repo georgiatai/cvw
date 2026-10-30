@@ -4,6 +4,7 @@
 //   FPU_IEEE754       IEEE754 NaN handling (0 = use RISC-V NaN propagation instead)
 //   FPU_F_SUPPORTED, FPU_D_SUPPORTED, FPU_Q_SUPPORTED, FPU_ZFH_SUPPORTED   supported formats
 //   FPU_ZFA_SUPPORTED additional floating point instructions
+//   FPU_ROUND_TO_ODD_SUPPORTED   round to odd rounding mode (Frm = 110), vector fp specific
 //   FPU_IDIV_ON_FPU   integer division on the FP divider
 //   FPU_RADIX, FPU_DIVCOPIES   FP divider architecture
 
@@ -99,6 +100,7 @@ localparam fpu_pkg::fpu_t FP = '{
   Q_SUPPORTED    : FPU_Q_SUPPORTED,
   ZFH_SUPPORTED  : FPU_ZFH_SUPPORTED,
   ZFA_SUPPORTED  : FPU_ZFA_SUPPORTED,
+  ROUND_TO_ODD_SUPPORTED : FPU_ROUND_TO_ODD_SUPPORTED,
   IDIV_ON_FPU    : FPU_IDIV_ON_FPU,
   RADIX          : FPU_RADIX,
   DIVCOPIES      : FPU_DIVCOPIES,

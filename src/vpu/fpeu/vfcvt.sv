@@ -94,7 +94,7 @@ module vfcvt import cvw::*, fpu_pkg::*; #(parameter cvw_t P, parameter fpu_t FP)
   .ResSubnormUf(CvtResSubnormUf), .Cs(Cs), .IntZero(IntZero), .LzcIn(CvtLzcIn));
 
   // postprocessor
-  postprocess #(P, 1) postproc (
+  postprocess #(FP) postproc (
     .Xs(Xs), .Ys(1'b0),
     .Xm(Xm), .Ym({(P.NF+1){1'b0}}), .Zm({(P.NF+1){1'b0}}),
     .Frm(Frm),

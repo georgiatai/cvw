@@ -39,6 +39,7 @@ typedef struct packed {
   // RISC-V Features
   logic         ZFH_SUPPORTED;
   logic         ZFA_SUPPORTED;
+  logic         ROUND_TO_ODD_SUPPORTED; // round to odd rounding mode (Frm = 110), used by vfncvt.rod
 
 // Integer Divider Configuration
   logic         IDIV_ON_FPU;
